@@ -1,0 +1,8 @@
+.venv/
+captures/
+decoded/
+runs/
+__pycache__/
+*.py[cod]
+.DS_Store
+scripts/game_window
