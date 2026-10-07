@@ -1,6 +1,6 @@
 # 羊了个羊地图解析、求解与自动点击
 
-这是一个 macOS 本地工具，用于从 Reqable 捕获的微信小游戏响应中还原《羊了个羊》每日挑战地图，按地图 `type` 和遮挡关系计算无道具消除顺序，并通过辅助功能在微信窗口发送鼠标点击。
+这是一个 macOS 本地工具，用于从 Reqable 捕获的微信小游戏响应中还原《羊了个羊》普通关卡和羊羊大世界地图，按地图 `type` 和遮挡关系计算无道具消除顺序，并通过辅助功能在微信窗口发送鼠标点击。
 
 项目在本机运行。Reqable 负责记录游戏请求；脚本通过 Reqable 自带的本地 MCP 服务读取记录，不需要把抓包文件复制到项目。求解只依赖地图中的数字 `type`，牌名只用于日志显示。
 
@@ -10,7 +10,7 @@
 - 游戏服务路由版本：`/sheep/v1/...`；具体字段按抓到的响应校验，客户端/服务端不一定遵循独立的语义版本号。
 - Reqable MCP 初始化协议：`2024-11-05`。
 - Python：3.9 或更新版本；原生窗口助手使用当前 macOS SDK 编译。
-- 牌型名称：type 2 至 15 按本项目名称表显示；type 1 按用户确认显示为“草”。
+- 牌型名称：普通关卡使用本项目名称表；大世界保留数字 type，未核验前不套用普通关卡名称。
 - 自动点击：点击位置由地图坐标和固定窗口布局计算。程序不会从屏幕识别牌面或读取真实槽位，也不会确认游戏的胜利弹窗。
 - 协议事实与样本统计于 2026-10-08 核对。游戏服务端和 Reqable 版本更新后，接口行为可能变化。
 
@@ -18,17 +18,19 @@
 
 ```mermaid
 flowchart LR
-    A[微信进入第二关] --> B[Reqable 捕获 map_info_ex]
-    B --> C[本地 Reqable MCP 读取响应]
-    C --> D[解压 match_data]
-    D --> E[读取静态 .map 并按坐标合并]
-    E --> F[校验 type、位置和数量]
-    F --> G[求解并独立回放]
-    G --> H[将地图坐标换算为窗口坐标]
-    H --> I[通过 macOS 辅助功能发送点击]
+    A[进入普通关卡或羊羊大世界] --> B{Reqable 捕获开始请求}
+    B -->|普通关卡 map_info_ex| C[读取 match_data]
+    B -->|大世界 world/game_start| D[读取静态地图和 seed]
+    D --> E[从匹配的 seed 响应恢复牌型]
+    C --> F[按坐标合并静态地图]
+    E --> F
+    F --> G[校验模式、type、位置和数量]
+    G --> H[求解并独立回放]
+    H --> I[将地图坐标换算为窗口坐标]
+    I --> J[通过 macOS 辅助功能发送点击]
 ```
 
-完整运行命令是 `python run`。脚本执行前需要 Reqable 已开始抓包，微信小游戏已停在第二关初始画面，槽位为空。
+完整运行命令是 `python run`。脚本执行前需要 Reqable 已开始抓包，微信小游戏已进入目标模式的初始地图，槽位为空。大世界在 `need_seed=true` 时还需要同一 Reqable 会话中存在可验证的历史结算响应；若证据不足，程序停止而不猜测牌型。
 
 ## 安装环境
 
@@ -71,7 +73,7 @@ Reqable 本地 MCP 服务的默认路径写在 `scripts/map_capture.py`：
 ## 快速开始
 
 1. 打开 Reqable，确认正在捕获流量。
-2. 在微信打开《羊了个羊：星球》，进入第二关初始地图，不要先点击牌。
+2. 在微信打开《羊了个羊：星球》，进入普通关卡或羊羊大世界初始地图，不要先点击牌。
 3. 在项目根目录执行：
 
    ```sh
@@ -130,18 +132,21 @@ python run --delay 0.4
 
 | 用途 | 当前地址 | 使用方式 |
 | --- | --- | --- |
-| 获取地图初始化响应 | `https://cat-match.easygame2021.com/sheep/v1/game/map_info_ex` | 从 Reqable 历史记录中读取匹配主机和路径的响应 |
+| 普通关卡初始化 | `https://cat-match.easygame2021.com/sheep/v1/game/map_info_ex` | 从 Reqable 历史记录读取；`matchType=3`，优先使用 `match_data` |
+| 大世界初始化 | `https://cat-match.easygame2021.com/sheep/v1/game/world/game_start` | 从 Reqable 历史记录读取；`matchType=6`，读取 `map_seed_2` 和静态地图标识 |
+| 大世界牌型数据 | `https://cat-match.easygame2021.com/sheep/v1/game/map_info_ex_seed` | 从 Reqable 历史记录读取本局 seed 响应；按同会话、同加密版本的结算记录验证后本地恢复牌型 |
 | 获取静态地图文件 | `https://cat-match-static.easygame2021.com/maps/{map_md5}.map` | 优先从 Reqable 记录读取；未捕获时用 Python `urllib` 发起 GET |
 
-当前解析器按主机和 URL 路径筛选 `map_info_ex`，再从响应内容解出数据；解析器不保存完整请求 URL、请求头或会话 token。请求方法由客户端当前实现决定，代码没有用 HTTP 方法作筛选条件。
+当前解析器按主机和 URL 路径筛选两种模式的开始请求、seed 请求及结算记录，再从响应内容解出数据；解析器不会把完整请求 URL、请求头或会话 token 写入运行报告。请求方法由客户端当前实现决定，代码没有用 HTTP 方法作筛选条件。
 
 初始化响应按 JSON 读取，使用字段如下：
 
 | JSON 字段 | 含义与校验 |
 | --- | --- |
 | `err_code` | 必须为 `0`，否则视为游戏接口失败 |
-| `data.map_md5` | 当前每日挑战预期含两项；下标 `1` 指第二关静态地图标识 |
-| `data.match_data` | LZ-string UTF-16 压缩的 JSON 字符串；为空时立即报错，不回退到旧地图 |
+| `data.map_md5` | 当前两种模式均要求两项；下标 `1` 指目标关卡静态地图标识 |
+| `data.match_data` | 普通关卡可能提供 LZ-string UTF-16 压缩的 JSON 字符串；为空时走该模式的 seed 分支，不复用旧地图 |
+| `data.map_seed_2`、`data.need_seed` | 大世界 seed 标识及是否需要读取 seed 响应 |
 
 响应的结构示意如下。值用占位符表示，不应把 Reqable 中的完整 URL、请求头或账号凭据复制到公开文档：
 
@@ -155,9 +160,8 @@ python run --delay 0.4
 }
 ```
 
-解压后的 `match_data` 当前要求恰好包含两个关卡状态。程序选择下标 `1`，并要求：
+若响应包含 `match_data`，解压后当前要求恰好包含两个关卡状态，程序选择下标 `1`，并要求该状态的 `gameType` 与开始请求匹配（普通关卡为 `3`，大世界为 `6`），且：
 
-- `crushMapInfo.gameType == 3`，即当前实现支持的每日挑战类型。
 - `fullSync == true`。
 - `gameState.crushedBlockCount`、`crushAreaBlocks`、`moveOutAreaBlocks` 显示棋盘尚未操作。
 - `gameState.allBlockRuntimeData` 中每张牌都能和静态地图节点匹配。
@@ -234,7 +238,7 @@ python run --delay 0.4
 
 protobuf 字段语义应以当前本机代码和匹配的客户端协议为准；未知字段保留为 wire-format 字段，不据此猜测业务含义。
 
-静态地图通常没有具体 `type`，解析器会先用 `0` 表示未赋型节点；运行时响应提供的牌型和 `blockId` 再按 `layerNum-colNum-rowNum` 组成的节点 ID 合并。合并后会核对静态与运行时节点集合、每张牌的 `moldType`，以及每类牌数量是否等于 `blockTypeData` 组数乘以 3。
+静态地图通常没有具体 `type`。普通关卡使用运行时 `match_data` 提供的牌型和 `blockId`，按 `layerNum-colNum-rowNum` 与静态节点合并。大世界若初始化响应没有 `match_data`，则读取本局 `/map_info_ex_seed` 请求及响应；当前实现以同会话、相同 `encryptKeyVersion` 的历史结算记录验证并恢复 seed 响应，再按静态地图和 seed 生成每张牌的 type。两种路径都会核对地图类型数量；运行时合并还会核对节点集合与 `moldType`。
 
 ### Reqable MCP 本地接口
 
@@ -242,7 +246,7 @@ protobuf 字段语义应以当前本机代码和匹配的客户端协议为准�
 
 | MCP 工具 | 输入 | 用途 |
 | --- | --- | --- |
-| `capture_live_filter` | `filters` | 按主机 `cat-match.easygame2021.com` 和关键字 `/map_info_ex` 筛选捕获记录；静态地图查找按完整 URL 筛选 |
+| `capture_live_filter` | `filters` | 按主机和路径筛选普通关卡、大世界开始、seed 与结算记录；静态地图查找按完整 URL 筛选 |
 | `capture_live_get_by_id` | `id` | 读取匹配记录的响应状态、编码和响应体 |
 
 调用参数形状示意：
@@ -267,7 +271,7 @@ Reqable MCP 与上述游戏 HTTP 接口不是同一个接口：前者是本机�
 
 ### 不会调用的接口
 
-当前自动流程不会向 `/logic_server/v1` 等动作接口提交游戏操作，不会请求 seed 解密接口，也不会调用游戏内道具接口。点击是通过 `scripts/game_window.swift` 对指定微信窗口发送鼠标事件完成的。静态地图在 Reqable 中未捕获时，程序只对公开地图文件 URL 发起 GET。
+当前自动流程不会向 `/logic_server/v1` 等动作接口提交游戏操作，也不会调用游戏内道具接口。点击是通过 `scripts/game_window.swift` 对指定微信窗口发送鼠标事件完成的。seed 请求由微信客户端发出，脚本只读取 Reqable 捕获记录并在本地验证、恢复，不会另行向 seed 接口发送请求。静态地图在 Reqable 中未捕获时，程序只对公开地图文件 URL 发起 GET。
 
 ## 地图数据和牌型
 
@@ -281,9 +285,9 @@ Reqable MCP 与上述游戏 HTTP 接口不是同一个接口：前者是本机�
 | 4 | 树桩 | 9 | 剪刀 | 14 | 篝火 |
 | 5 | 叉子（耙子） | 10 | 奶瓶 | 15 | 粉红线团 |
 
-type 1 在代码中由用户确认显示为“草”；其他牌型名称由 `scripts/map_capture.py` 的 `NAMES` 映射。改名不会改变求解结果。
+普通关卡的牌型名称由 `scripts/map_capture.py` 的 `NAMES` 映射，type 1 显示为“草”。羊羊大世界当前不复用普通关卡名称表，日志显示“类型N”；数字 type 本身用于三消分组。改名不会改变求解结果。
 
-截至 2026-10-08 核对的本地每日挑战样本有 243 张牌、23 层、15 种 type。各 type 数量满足 3 的倍数，总计 81 组三消。这是当日样本快照，不是对后续地图固定数量的保证。
+截至 2026-10-08 核对的本地普通关卡样本有 243 张牌、23 层、15 种 type；另一个大世界样本有 255 张牌、26 层、15 种 type、43 张初始可点牌。它们是单局样本快照，不是后续地图固定数量的保证。该大世界样本在 120 秒求解上限内未得到已验证解，因此不能据此认为大世界已完成端到端自动通关。
 
 ## 求解规则和算法
 
@@ -363,14 +367,16 @@ screen_y = window_origin_y + (146 + 4.5 × rowNum) × scale_y
 
 | 情况 | 处理方式 |
 | --- | --- |
-| Reqable 没有匹配的 `map_info_ex` 记录 | 提示先启动抓包并重新进入挑战；不使用旧记录代替 |
-| `match_data` 为空、格式错误或解压失败 | 终止当前运行 |
+| Reqable 没有当前模式的开始记录，或模式与 `matchType` 不匹配 | 停止；重新开始抓包并进入目标模式，不使用旧记录代替 |
+| 大世界 seed 请求缺失或找不到可验证的同会话、同加密版本结算记录 | 停止；保留 Reqable 记录并补齐证据，不猜测牌型 |
+| `match_data` 格式错误或解压失败 | 终止当前运行 |
 | 地图数量、坐标、结构或类型计数不一致 | 终止当前运行，不点击 |
 | 地图运行时状态显示已有点击/消除 | 拒绝作为新局求解输入 |
 | 找不到唯一的游戏窗口 | 停止；可用 `--window-id` 选择窗口 |
 | 游戏窗口位置、尺寸、焦点或覆盖状态不满足要求 | 点击前停止 |
 | 用户移动鼠标超过阈值 | 停止，保留进度文件 |
 | Reqable MCP 单次请求超过 15 秒 | 报超时并停止 |
+| 求解器到达 `--seconds` 时限 | 报 `timeout` 并停止，不发送点击；可提高时限或改进求解算法 |
 
 要恢复只能指定对应的本机运行目录：
 
@@ -402,14 +408,16 @@ python run --resume runs/your-run-id
 ├── experiments/legacy/         # 不属于当前主流程的实验脚本
 ├── scripts/
 │   ├── play_game.py            # 流程编排、坐标和运行记录
-│   ├── map_capture.py          # Reqable MCP、响应解码、地图合并
+│   ├── map_capture.py          # Reqable MCP、响应解码、双模式地图解析
+│   ├── seed_map.py             # 大世界 seed 校验和牌型生成
 │   ├── analyze_captures.py     # 静态 .map 与 protobuf wire-format 解析
 │   ├── solve_map.py            # 搜索、独立回放和求解器 CLI
 │   ├── game_window.swift       # macOS 窗口检查和鼠标事件
 │   ├── run_game.command        # 预检/底层入口
 │   └── requirements-click.txt  # Python 运行依赖
 ├── tests/
-│   └── test_solve_map.py       # 求解器边界测试
+│   ├── test_solve_map.py       # 求解器边界测试
+│   └── test_map_capture.py     # 双模式、seed 和捕获记录校验
 ├── captures/                   # 本机 Reqable 输入，Git 忽略
 ├── decoded/                    # 本机解码数据，Git 忽略
 └── runs/                       # 本机每次运行输出，Git 忽略
@@ -433,8 +441,9 @@ python3 -m unittest discover -s tests -v
 
 ## 项目边界
 
-- 支持输入：初始化状态、完整每日挑战第二关地图、普通固定 type 牌、空槽位、不使用道具。
+- 支持输入：普通关卡和大世界的初始地图捕获与牌型恢复；求解器输入为固定 type 牌、空槽位、不使用道具。
 - 不支持：局中变化地图、特殊动态牌、非棋盘区域牌、洗牌/撤回/移出等道具的状态建模。
+- 大世界 seed 恢复依赖可验证的 Reqable 历史结算样本；大地图可能在默认求解时限内无法得到解。解析成功不代表求解或点击一定成功。
 - 不处理微信登录、进入小游戏、点击关卡入口、广告或胜利弹窗。
 - 不调用游戏动作接口，不保证客户端/服务端会接受每个鼠标事件。
 - 游戏接口可能调整。出现空响应、格式变化或类型校验失败时，应先检查当前 Reqable 记录与接口结构，不应移除校验后继续点击。
