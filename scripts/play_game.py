@@ -16,18 +16,20 @@ from solve_map import Solver, load_cards, replay
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPER = ROOT / 'scripts/game_window'
-TYPE_NAMES = {1: '草'}
 BASE_WINDOW_SIZE = (350, 665)
+MODE_LABELS = {'daily': '普通关卡', 'world': '羊羊大世界'}
+MODE_LAYOUTS = {'daily': (50, 146, 4.5), 'world': (50, 146, 4.5)}
 
 
-def coordinate_model(window):
+def coordinate_model(window, mode):
     bounds = window['bounds']
     sx = bounds['Width'] / BASE_WINDOW_SIZE[0]
     sy = bounds['Height'] / BASE_WINDOW_SIZE[1]
     if abs(sx - sy) > 0.02:
         raise ValueError('Game window aspect ratio differs from the supported layout')
-    return {'xScale': 4.5 * sx, 'xOffset': 50 * sx,
-            'yScale': 4.5 * sy, 'yOffset': 146 * sy}
+    ox, oy, scale = MODE_LAYOUTS[mode]
+    return {'mode': mode, 'xScale': scale * sx, 'xOffset': ox * sx,
+            'yScale': scale * sy, 'yOffset': oy * sy}
 
 
 def card_point(card, model):
@@ -59,6 +61,16 @@ def select_window(info, ident):
 
 def prepare(client, args):
     game_map = get_current_map(client)
+    source = game_map['_source']
+    print(f"识别模式：{MODE_LABELS[source['mode']]}；请求 {source['recordId']}；"
+          f"牌型来源：{source['typeSource']}", flush=True)
+    for existing in (ROOT / 'runs').glob(f"{source['recordId']}-*/map.json"):
+        saved_source = json.loads(existing.read_text()).get('_source', {})
+        if saved_source.get('recordUid') != source['recordUid']:
+            continue
+        saved_progress = json.loads((existing.parent / 'progress.json').read_text())
+        if saved_progress.get('nextStep', 0) or saved_progress.get('inFlight'):
+            raise ValueError(f'This game already has clicks; resume its run or start a new game: {existing.parent}')
     cards = load_cards(game_map)
     solver = Solver(cards, args.seconds)
     status, order = solver.solve()
@@ -88,7 +100,7 @@ def resume(folder):
 
 def type_label(cards, card_type):
     return next((card.name for card in cards if card.type == card_type and card.name),
-                TYPE_NAMES.get(card_type, f'类型{card_type}'))
+                f'类型{card_type}')
 
 
 def check_stop(folder, pointer):
@@ -111,9 +123,7 @@ def execute(client, window, folder, game_map, cards, result, progress, model, ar
         current_window = select_window(native('inspect'), window['id'])
         if current_window['bounds'] != window['bounds'] or current_window['pid'] != window['pid']:
             raise ValueError('Game window moved, resized, or restarted')
-        latest = client.latest_map_record()
-        if latest['uid'] != game_map['_source']['recordUid']:
-            raise ValueError('A different game has started')
+        client.ensure_current_game(game_map['_source'])
         i = result['order'][step]
         x, y = card_point(cards[i], model)
         bounds = window['bounds']
@@ -128,7 +138,7 @@ def execute(client, window, folder, game_map, cards, result, progress, model, ar
         tray = result['steps'][step]['trayAfter']
         clicked = type_label(cards, cards[i].type)
         tray_labels = '、'.join(type_label(cards, card_type) for card_type in tray) or '空'
-        print(f"已点击【{clicked}】；当前槽位【{tray_labels}】（{step+1}/{len(cards)}）", flush=True)
+        print(f"已点击【{clicked}】；当前槽位（推算）【{tray_labels}】（{step+1}/{len(cards)}）", flush=True)
         time.sleep(args.delay)
         check_stop(folder, pointer)
     progress['status'] = 'sequence_completed' if stop_at == len(cards) else 'paused'
@@ -146,9 +156,9 @@ def run(args):
             folder, game_map, cards, result, progress = resume(args.resume.resolve())
         else:
             folder, game_map, cards, result, progress = prepare(client, args)
-        if client.latest_map_record()['uid'] != game_map['_source']['recordUid']:
-            raise ValueError('The saved run belongs to another game')
-        model = coordinate_model(window)
+        client.ensure_current_game(game_map['_source'])
+        mode = game_map['_source'].get('mode', 'daily')
+        model = coordinate_model(window, mode)
         save(folder / 'coordinate-model.json', model)
         preflight = {'runDirectory': str(folder), 'source': game_map['_source'],
                      'steps': len(cards), 'window': window, 'coordinateModel': model,

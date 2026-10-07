@@ -119,6 +119,8 @@ def decode_map_file(path: Path) -> dict:
                 "rowNum": scalar(node, 4, 0),
                 "layerNum": scalar(node, 5, 0),
                 "moldType": scalar(node, 6, 0),
+                "metaType": scalar(node, 7, 0),
+                "metaData": scalar(node, 8, 0),
                 "blockNode": None,
             })
         if layer is not None:
