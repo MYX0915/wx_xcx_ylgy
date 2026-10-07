@@ -172,7 +172,10 @@ def run(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--execute', action='store_true', help='Actually click; default only checks and plans')
-    parser.add_argument('--resume', type=Path, help='Resume a run stopped between verified clicks')
+    parser.add_argument(
+        '--resume', type=Path,
+        help='Resume after confirming the previous click completed in the game',
+    )
     parser.add_argument('--window-id', type=int)
     parser.add_argument('--max-clicks', type=int, default=500)
     parser.add_argument('--seconds', type=float, default=120)
