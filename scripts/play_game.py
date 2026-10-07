@@ -10,8 +10,8 @@ from pathlib import Path
 import subprocess
 import time
 
-from map_capture import Reqable, get_current_map
-from solve_map import Solver, load_cards, replay
+from map_capture import Reqable, apply_type_names, get_current_map
+from solve_map import load_cards, replay, solve
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -72,12 +72,13 @@ def prepare(client, args):
         if saved_progress.get('nextStep', 0) or saved_progress.get('inFlight'):
             raise ValueError(f'This game already has clicks; resume its run or start a new game: {existing.parent}')
     cards = load_cards(game_map)
-    solver = Solver(cards, args.seconds)
-    status, order = solver.solve()
+    result = solve(cards, args.seconds)
+    status, order = result['status'], result['order']
     if status != 'solved':
         raise ValueError('No verified solution: ' + status)
-    result = replay(cards, order)
     result.update(status=status, operations=[cards[i].id for i in order], order=order)
+    print(f"完整解已验证：{len(order)} 步；求解 {result['elapsedSeconds']} 秒；"
+          f"方法 {result['backend']}", flush=True)
     folder = ROOT / 'runs' / (str(game_map['_source']['recordId']) + '-' + datetime.now().strftime('%Y%m%d-%H%M%S'))
     folder.mkdir(parents=True, exist_ok=False)
     save(folder / 'map.json', game_map)
@@ -89,9 +90,10 @@ def prepare(client, args):
 
 def resume(folder):
     game_map = json.loads((folder / 'map.json').read_text())
+    apply_type_names(game_map, game_map.get('_source', {}).get('mode', 'daily'))
     cards = load_cards(game_map)
     result = json.loads((folder / 'solution.json').read_text())
-    replay(cards, result['order'])
+    result.update(replay(cards, result['order']))
     progress = json.loads((folder / 'progress.json').read_text())
     if progress['inFlight']:
         raise ValueError('Previous click was not verified; inspect the game before attempting a new run')

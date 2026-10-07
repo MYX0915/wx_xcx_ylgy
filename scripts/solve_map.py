@@ -73,6 +73,7 @@ class Solver:
         self.blockers = blocker_masks(cards)
         self.children = [[j for j, mask in enumerate(self.blockers) if mask & (1 << i)]
                          for i in range(len(cards))]
+        self.child_masks = [sum(1 << j for j in children) for children in self.children]
         types = sorted({c.type for c in cards})
         self.types = [types.index(c.type) for c in cards]
         self.tray = [0] * len(types)
@@ -112,8 +113,13 @@ class Solver:
             indices.append(i)
             counts[self.types[i]] += 1
         ranked = []
+        equivalent = set()
         for i in indices:
             t = self.types[i]
+            signature = (t, self.child_masks[i])
+            if signature in equivalent:
+                continue
+            equivalent.add(signature)
             held = self.tray[t]
             if occupied == CAPACITY - 1 and held != 2:
                 continue
@@ -147,7 +153,7 @@ class Solver:
                 return True
             self.path.pop()
             self.tray[t] = before
-        # With an empty initial tray, remaining cards uniquely determine tray counts modulo 3.
+        # With an empty initial tray, remaining cards determine tray counts modulo 3.
         if len(self.dead) < 500000:
             self.dead.add(remaining)
         return False
@@ -192,6 +198,28 @@ def replay(cards: list[Card], order: list[int]) -> dict:
             "peakBeforeElimination": peak, "peakAfterElimination": stable_peak}
 
 
+def solve(cards: list[Card], seconds: float, seed: int = 0) -> dict:
+    """Try cheap forward DFS first, then reverse search within the same budget."""
+    if __package__:
+        from .reverse_search import reverse_search
+    else:
+        from reverse_search import reverse_search
+    started = time.monotonic()
+    forward = Solver(cards, min(2.0, seconds / 4), seed)
+    status, order = forward.solve()
+    result = {'status': status, 'order': order, 'backend': 'forward_dfs',
+              'visited': forward.visited, 'attempts': forward.attempts,
+              'bestDepth': forward.best_depth}
+    if status == 'timeout' and time.monotonic() - started < seconds:
+        result = reverse_search(cards, seconds - (time.monotonic() - started))
+        result['forwardVisited'] = forward.visited
+        result['attempts'] = forward.attempts + 1
+    if result['status'] == 'solved':
+        result.update(replay(cards, result['order']))
+    result['elapsedSeconds'] = round(time.monotonic() - started, 3)
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("map", type=Path)
@@ -204,22 +232,18 @@ def main() -> None:
     raw = args.map.read_bytes()
     data = json.loads(raw)
     cards = load_cards(data)
-    start = time.monotonic()
-    solver = Solver(cards, args.seconds, args.seed)
-    status, order = solver.solve()
+    search = solve(cards, args.seconds, args.seed)
+    status, order = search['status'], search['order']
     result = {"status": status, "mapPath": str(args.map.resolve()),
               "mapSha256": hashlib.sha256(raw).hexdigest(), "levelKey": data.get("levelKey"),
               "source": data.get("_source"), "capacity": CAPACITY, "cellSize": CELL_SIZE,
-              "usesItems": False, "elapsedSeconds": round(time.monotonic() - start, 3),
-              "visited": solver.visited, "attempts": solver.attempts,
-              "bestDepth": solver.best_depth, "operations": []}
+              "usesItems": False, **search, "operations": []}
     if status == "solved":
-        result.update(replay(cards, order))
         result["operations"] = [cards[i].id for i in order]
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
     print(json.dumps({k: v for k, v in result.items()
-                      if k not in ("steps", "operations", "source")}, ensure_ascii=False))
+                      if k not in ("steps", "operations", "source", "order")}, ensure_ascii=False))
     raise SystemExit(0 if status == "solved" else 2)
 
 

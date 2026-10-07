@@ -96,6 +96,13 @@ class SolverTests(unittest.TestCase):
             if expected:
                 self.assertTrue(replay(cs, order)['verified'])
 
+    def test_collapses_cards_with_identical_type_and_blocker_effect(self):
+        cs = [card(0, 1, layer=2), card(1, 1, x=1, layer=2),
+              card(2, 2, layer=1)]
+        solver = Solver(cs, 1)
+        candidates = solver.candidates(0b111, 0b011, 0)
+        self.assertEqual(len(candidates), 1)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -29,7 +29,10 @@ GAME_MODES = {
 NAMES = {1: '草', 2: '胡萝卜', 3: '玉米', 4: '树桩', 5: '叉子', 6: '白菜', 7: '羊毛',
          8: '刷子', 9: '剪刀', 10: '奶瓶', 11: '水桶', 12: '手套', 13: '铃铛',
          14: '篝火', 15: '粉红线团'}
-MODE_NAMES = {'daily': NAMES, 'world': {}}
+WORLD_NAMES = {1: '草', 2: '胡萝卜', 3: '玉米', 4: '树桩', 5: '叉子', 6: '白菜', 7: '羊毛',
+               8: '刷子', 9: '剪刀', 10: '奶瓶', 11: '水桶', 12: '手套', 13: '铃铛',
+               14: '篝火', 15: '粉红线团'}
+MODE_NAMES = {'daily': NAMES, 'world': WORLD_NAMES}
 GAME_ENDS = {'/sheep/v1/game/game_over_ex', '/sheep/v1/game/world/game_over'}
 
 
@@ -238,6 +241,13 @@ def merge_runtime(game_map, states, match_type):
     return game_map
 
 
+def apply_type_names(game_map, mode):
+    names = MODE_NAMES.get(mode, {})
+    for nodes in game_map['levelData'].values():
+        for node in nodes:
+            node['typeName'] = names.get(node['type'])
+
+
 def get_current_map(client):
     record = client.latest_map_record()
     mode, match_type = game_mode(record)
@@ -261,9 +271,7 @@ def get_current_map(client):
             source.update(evidence)
         game_map = assign_types(game_map, seed)
         source['typeSource'] = 'seed'
-    for nodes in game_map['levelData'].values():
-        for node in nodes:
-            node['typeName'] = MODE_NAMES[mode].get(node['type'])
+    apply_type_names(game_map, mode)
     cards = load_cards(game_map)
     expected = {int(kind): groups * 3 for kind, groups in game_map['blockTypeData'].items() if groups}
     if Counter(c.type for c in cards) != expected:

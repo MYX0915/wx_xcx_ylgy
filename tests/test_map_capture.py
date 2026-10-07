@@ -6,12 +6,16 @@ import json
 from pathlib import Path
 import re
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 from urllib.parse import quote, urlencode
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from map_capture import Reqable, game_mode, get_current_map, merge_runtime
+from map_capture import (MODE_NAMES, Reqable, apply_type_names, game_mode,
+                         get_current_map, merge_runtime)
+from play_game import resume, type_label
+from solve_map import load_cards
 from seed_map import assign_types, decode_seed_ack, recover_seed
 
 
@@ -100,7 +104,7 @@ class CaptureTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, '缺少本局种子'):
                 get_current_map(c)
 
-    def test_world_pipeline_recovers_own_seed_and_leaves_names_unmapped(self):
+    def test_world_pipeline_recovers_own_seed_and_labels_types(self):
         initial, request, cipher, settlement = seed_fixture()
         payload = {'err_code': 0, 'data': {'map_md5': ['a' * 32, 'b' * 32],
                                          'map_seed_2': initial, 'need_seed': True}}
@@ -112,7 +116,7 @@ class CaptureTests(unittest.TestCase):
             result = get_current_map(c)
         self.assertEqual(result['_source']['recordId'], 2)
         self.assertEqual(result['_source']['typeSource'], 'seed')
-        self.assertTrue(all(n['type'] == 1 and n['typeName'] is None for n in result['levelData']['1']))
+        self.assertTrue(all(n['type'] == 1 and n['typeName'] == '草' for n in result['levelData']['1']))
         c.records[1]['url'] = c.records[1]['url'].replace('synthetic-session', 'another-session')
         with patch('map_capture.read_static_map', return_value=small_map()):
             with self.assertRaisesRegex(ValueError, '无法验证'):
@@ -132,6 +136,44 @@ class CaptureTests(unittest.TestCase):
         state['gameState']['crushAreaBlocks'] = [1]
         with self.assertRaisesRegex(ValueError, 'progressed'):
             merge_runtime(small_map(), [{}, state], 3)
+
+
+class TypeNameTests(unittest.TestCase):
+    def test_mode_tables_are_independent(self):
+        self.assertIsNot(MODE_NAMES['daily'], MODE_NAMES['world'])
+        self.assertEqual(set(MODE_NAMES['world']), set(range(1, 16)))
+        self.assertEqual(MODE_NAMES['world'][11], '水桶')
+        self.assertEqual(MODE_NAMES['world'][12], '手套')
+        with patch.dict(MODE_NAMES['world'], {1: '大世界测试名称'}):
+            game_map = assign_types(small_map(), [1, 2, 3, 4])
+            apply_type_names(game_map, 'world')
+            self.assertEqual(type_label(load_cards(game_map), 1), '大世界测试名称')
+            apply_type_names(game_map, 'daily')
+            self.assertEqual(type_label(load_cards(game_map), 1), '草')
+
+    def test_unknown_type_does_not_inherit_a_stale_name(self):
+        game_map = small_map()
+        for node in game_map['levelData']['1']:
+            node.update(type=99, typeName='旧名称')
+        apply_type_names(game_map, 'world')
+        self.assertEqual(type_label(load_cards(game_map), 99), '类型99')
+
+    def test_resume_refreshes_names_without_changing_clicks(self):
+        game_map = assign_types(small_map(), [1, 2, 3, 4])
+        game_map['_source'] = {'mode': 'world'}
+        for node in game_map['levelData']['1']:
+            node['typeName'] = '旧名称'
+        with tempfile.TemporaryDirectory() as name, patch.dict(MODE_NAMES['world'], {1: '大世界测试名称'}):
+            folder = Path(name)
+            (folder / 'map.json').write_text(json.dumps(game_map))
+            (folder / 'solution.json').write_text(json.dumps({'order': [0, 1, 2]}))
+            (folder / 'progress.json').write_text(json.dumps({'inFlight': False, 'nextStep': 1}))
+            _, _, cards, result, progress = resume(folder)
+            self.assertEqual(type_label(cards, 1), '大世界测试名称')
+            self.assertTrue(all(step['name'] == '大世界测试名称' for step in result['steps']))
+            self.assertEqual(result['order'], [0, 1, 2])
+            self.assertEqual(progress['nextStep'], 1)
+            self.assertEqual(json.loads((folder / 'map.json').read_text()), game_map)
 
 
 class SeedTests(unittest.TestCase):

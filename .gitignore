@@ -6,3 +6,4 @@ __pycache__/
 *.py[cod]
 .DS_Store
 scripts/game_window
+scripts/solve_map_native
