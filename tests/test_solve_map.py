@@ -4,7 +4,7 @@ from collections import deque
 import random
 import unittest
 
-from solve_map import Card, Solver, blocker_masks, load_cards, replay
+from scripts.solve_map import Card, Solver, blocker_masks, load_cards, replay
 
 
 def card(i, kind, x=0, y=0, layer=1):

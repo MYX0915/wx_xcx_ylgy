@@ -380,12 +380,26 @@ python run --resume runs/your-run-id
 
 仅在同一局仍处于脚本预期状态、且没有额外手动点击时恢复。不要用旧运行目录去操作新地图。
 
+## 深入文档
+
+- [文档索引](docs/README.md)：按使用指南、研究记录、历史分析和地图样本分类浏览。
+- [地图求解与点击](docs/guides/click-pipeline.md)：点击前置条件、进度文件和坐标模型。
+- [求解器规则](docs/guides/solver.md)：输入契约、遮挡规则、搜索与验证。
+- [地图字段分析](docs/research/map-field-analysis.md)：逐牌类型与静态地图的来源及核验要求。
+- [2026-10-08 样本记录](docs/samples/2026-10-08/82136-new-game-verification.md)：固定地图快照，仅用于参考。
+
 ## 项目结构
 
 ```text
 .
 ├── README.md
 ├── run                         # 单命令完整流程入口
+├── docs/
+│   ├── README.md               # 文档索引
+│   ├── guides/                 # 当前点击与求解说明
+│   ├── research/               # 字段分析及历史研究
+│   └── samples/                # 固定日期地图样本，不可用于新局
+├── experiments/legacy/         # 不属于当前主流程的实验脚本
 ├── scripts/
 │   ├── play_game.py            # 流程编排、坐标和运行记录
 │   ├── map_capture.py          # Reqable MCP、响应解码、地图合并
@@ -393,7 +407,8 @@ python run --resume runs/your-run-id
 │   ├── solve_map.py            # 搜索、独立回放和求解器 CLI
 │   ├── game_window.swift       # macOS 窗口检查和鼠标事件
 │   ├── run_game.command        # 预检/底层入口
-│   ├── requirements-click.txt  # Python 运行依赖
+│   └── requirements-click.txt  # Python 运行依赖
+├── tests/
 │   └── test_solve_map.py       # 求解器边界测试
 ├── captures/                   # 本机 Reqable 输入，Git 忽略
 ├── decoded/                    # 本机解码数据，Git 忽略
@@ -402,10 +417,10 @@ python run --resume runs/your-run-id
 
 ## 开发与验证
 
-独立运行求解器边界测试：
+运行默认测试套件：
 
 ```sh
-.venv/bin/python -m unittest scripts/test_solve_map.py
+python3 -m unittest discover -s tests -v
 ```
 
 独立处理本机 `captures/` 下的 Reqable 响应与 `.map` 文件：
