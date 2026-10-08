@@ -213,8 +213,9 @@ def captured_seed(client, start, data):
             return seed, {'seedRecordId': record['id'], 'seedRecordUid': record['uid'],
                           'settlementRecordId': over['id'],
                           'encryptKeyVersion': form_values(record)['encryptKeyVersion']}
-    raise ValueError('本局种子无法验证：需要同一会话、同一加密版本的已完成对局结算记录。'
-                     '保留 Reqable 记录，手动完成一局后重新开局；不会回退旧地图')
+    raise ValueError('本局种子无法验证：缺少同一会话、同一加密版本的结算记录。'
+                     '请保持 Reqable 捕获，完成第一关并进入第二关后运行脚本获取地图；第一关通关或失败均可，无需通关第二关。'
+                     '保留 Reqable 记录，不会回退旧地图。')
 
 
 def merge_runtime(game_map, states, match_type):
