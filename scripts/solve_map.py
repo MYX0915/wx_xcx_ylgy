@@ -201,9 +201,9 @@ def replay(cards: list[Card], order: list[int]) -> dict:
 def solve(cards: list[Card], seconds: float, seed: int = 0) -> dict:
     """Try cheap forward DFS first, then reverse search within the same budget."""
     if __package__:
-        from .reverse_search import reverse_search
+        from .reverse_search import parallel_reverse_search
     else:
-        from reverse_search import reverse_search
+        from reverse_search import parallel_reverse_search
     started = time.monotonic()
     forward = Solver(cards, min(2.0, seconds / 4), seed)
     status, order = forward.solve()
@@ -211,9 +211,17 @@ def solve(cards: list[Card], seconds: float, seed: int = 0) -> dict:
               'visited': forward.visited, 'attempts': forward.attempts,
               'bestDepth': forward.best_depth}
     if status == 'timeout' and time.monotonic() - started < seconds:
-        result = reverse_search(cards, seconds - (time.monotonic() - started))
+        def verified(order):
+            try:
+                replay(cards, order)
+                return True
+            except (IndexError, ValueError):
+                return False
+
+        remaining = seconds - (time.monotonic() - started)
+        result = parallel_reverse_search(cards, remaining, seed=seed, validate=verified)
         result['forwardVisited'] = forward.visited
-        result['attempts'] = forward.attempts + 1
+        result['attempts'] = forward.attempts + result.get('attempts', 0)
     if result['status'] == 'solved':
         result.update(replay(cards, result['order']))
     result['elapsedSeconds'] = round(time.monotonic() - started, 3)
@@ -223,7 +231,7 @@ def solve(cards: list[Card], seconds: float, seed: int = 0) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("map", type=Path)
-    parser.add_argument("--seconds", type=float, default=120)
+    parser.add_argument("--seconds", type=float, default=180)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()

@@ -5,7 +5,7 @@ from pathlib import Path
 import random
 import unittest
 
-from scripts.reverse_search import reverse_search
+from scripts.reverse_search import parallel_reverse_search, reverse_search
 from scripts.solve_map import Card, replay, solve
 from test_solve_map import exhaustive
 
@@ -37,10 +37,25 @@ class ReverseSearchTests(unittest.TestCase):
     def test_seventh_card_can_complete_triple_in_forward_order(self):
         kinds = [1, 2, 3, 4, 5, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5]
         cards = make_cards([(kind, 0, 0, 15 - i) for i, kind in enumerate(kinds)])
-        result = reverse_search(cards, 5)
+        result = reverse_search(cards, 5, seed=47)
         self.assertEqual(result['status'], 'solved')
         self.assertEqual(result['order'], list(range(15)))
         self.assertEqual(replay(cards, result['order'])['peakBeforeElimination'], 7)
+
+    def test_seeded_search_is_reproducible(self):
+        kinds = [1, 2, 3, 4, 5, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5]
+        cards = make_cards([(kind, 0, 0, 15 - i) for i, kind in enumerate(kinds)])
+        first = reverse_search(cards, 5, seed=91)
+        second = reverse_search(cards, 5, seed=91)
+        self.assertEqual(first['status'], 'solved')
+        self.assertEqual(first['order'], second['order'])
+
+    def test_parallel_search_returns_a_replayable_solution(self):
+        kinds = [1, 2, 3, 4, 5, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5]
+        cards = make_cards([(kind, 0, 0, 15 - i) for i, kind in enumerate(kinds)])
+        result = parallel_reverse_search(cards, 5, workers=2, validate=lambda order: replay(cards, order))
+        self.assertEqual(result['status'], 'solved')
+        self.assertTrue(replay(cards, result['order'])['verified'])
 
     def test_seventh_unmatched_card_cannot_be_reversed(self):
         cards = make_cards([(i % 4 + 1, 0, 0, 12 - i) for i in range(12)])

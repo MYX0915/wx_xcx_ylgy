@@ -133,7 +133,19 @@ def execute(client, window, folder, game_map, cards, result, progress, model, ar
         y += bounds['Y']
         progress.update(inFlight=True, status='clicking')
         save(folder / 'progress.json', progress)
-        native('click', window['id'], x, y)
+        try:
+            native('click', window['id'], x, y)
+        except RuntimeError as exc:
+            if str(exc) in {
+                'Click target is covered by another window',
+                'Click target window does not match the game bounds',
+                'Game window lost focus',
+                'Cannot verify the window at the click target',
+                'Invalid click coordinates or missing accessibility permission',
+            }:
+                progress.update(inFlight=False, status='stopped', error=str(exc))
+                save(folder / 'progress.json', progress)
+            raise
         pointer = {'x': x, 'y': y}
         progress.update(nextStep=step+1, inFlight=False, status='running')
         save(folder / 'progress.json', progress)
@@ -190,7 +202,7 @@ def main():
     )
     parser.add_argument('--window-id', type=int)
     parser.add_argument('--max-clicks', type=int, default=500)
-    parser.add_argument('--seconds', type=float, default=120)
+    parser.add_argument('--seconds', type=float, default=180)
     parser.add_argument('--delay', type=float, default=0.5)
     args = parser.parse_args()
     if args.max_clicks < 1 or args.seconds <= 0 or args.delay < 0.3:

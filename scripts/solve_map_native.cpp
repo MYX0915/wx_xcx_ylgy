@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <random>
 #include <unordered_set>
 #include <vector>
 
@@ -70,12 +71,16 @@ struct Search {
     Clock::time_point deadline;
     int width, type_count = 0, best_depth = 0;
     uint64_t visited = 0;
+    uint64_t random_seed;
     bool pruned = false;
+    std::mt19937_64 rng;
+    std::uniform_real_distribution<double> noise{-1.5, 1.5};
 
-    Search(std::vector<Card> input, int beam_width, double seconds)
+    Search(std::vector<Card> input, int beam_width, double seconds, uint64_t seed)
         : cards(std::move(input)), dependencies(cards.size()), ancestors(cards.size()),
           deadline(Clock::now() + std::chrono::duration_cast<Clock::duration>(
-              std::chrono::duration<double>(seconds))), width(beam_width) {
+              std::chrono::duration<double>(seconds))), width(beam_width),
+          random_seed(seed), rng(seed) {
         std::vector<int> indices;
         for (int i = 0; i < int(cards.size()); ++i) {
             indices.push_back(i);
@@ -137,6 +142,7 @@ struct Search {
             child.parent = state.path;
             child.chosen = i;
             evaluate(child);
+            if (random_seed != 0) child.score += noise(rng);
             next.push_back(child);
             ++visited;
         }
@@ -179,7 +185,8 @@ struct Search {
 int main() {
     int count, width;
     double seconds;
-    if (!(std::cin >> count >> width >> seconds) || count < 1 || count > MaxCards
+    uint64_t seed;
+    if (!(std::cin >> count >> width >> seconds >> seed) || count < 1 || count > MaxCards
         || width < 1 || width > 100000 || !std::isfinite(seconds) || seconds <= 0) return 2;
     std::vector<Card> cards(count);
     std::array<int, MaxTypes> counts{};
@@ -189,7 +196,7 @@ int main() {
         ++counts[card.type];
     }
     for (int amount : counts) if (amount % 3) return 2;
-    Search search(std::move(cards), width, seconds);
+    Search search(std::move(cards), width, seconds, seed);
     std::vector<int> order;
     const char* status = search.solve(order);
     std::cout << "{\"status\":\"" << status << "\",\"visited\":" << search.visited

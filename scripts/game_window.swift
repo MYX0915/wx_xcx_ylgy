@@ -27,6 +27,29 @@ func emit(_ data: Any) {
     print(String(data: bytes, encoding: .utf8)!)
 }
 
+func raiseWindow(pid: pid_t, bounds: CGRect) -> Bool {
+    let app = AXUIElementCreateApplication(pid)
+    var rawWindows: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &rawWindows) == .success,
+          let rawWindows = rawWindows as? [AXUIElement] else { return false }
+    for window in rawWindows {
+        var positionValue: CFTypeRef?
+        var sizeValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &positionValue) == .success,
+              AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeValue) == .success,
+              let positionValue = positionValue, CFGetTypeID(positionValue) == AXValueGetTypeID(),
+              let sizeValue = sizeValue, CFGetTypeID(sizeValue) == AXValueGetTypeID() else { continue }
+        var origin = CGPoint.zero
+        var size = CGSize.zero
+        guard AXValueGetValue(positionValue as! AXValue, .cgPoint, &origin),
+              AXValueGetValue(sizeValue as! AXValue, .cgSize, &size),
+              abs(origin.x - bounds.origin.x) < 1, abs(origin.y - bounds.origin.y) < 1,
+              abs(size.width - bounds.width) < 1, abs(size.height - bounds.height) < 1 else { continue }
+        return AXUIElementPerformAction(window, kAXRaiseAction as CFString) == .success
+    }
+    return false
+}
+
 let args = CommandLine.arguments
 guard args.count >= 2 else { fail("Expected inspect, capture, focus, pointer, or click") }
 if args[1] == "inspect" {
@@ -49,6 +72,7 @@ else { fail("Game window is no longer available") }
 if args[1] == "focus" {
     guard let app = NSRunningApplication(processIdentifier: pid) else { fail("Application not found") }
     app.activate(options: [])
+    guard raiseWindow(pid: pid, bounds: bounds) else { fail("Could not raise the game window") }
     emit(describe(item))
 } else if args[1] == "capture" {
     guard args.count == 4, CGPreflightScreenCaptureAccess() else { fail("Screen recording permission is required") }
