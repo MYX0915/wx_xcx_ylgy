@@ -11,7 +11,7 @@
 - 项目版本：开发版，尚未发布语义版本号或正式 release tag。
 - 游戏服务路由版本：`/sheep/v1/...`；具体字段按抓到的响应校验，客户端/服务端不一定遵循独立的语义版本号。
 - Reqable MCP 初始化协议：`2024-11-05`。
-- Python：3.9 或更新版本；原生窗口助手使用当前 macOS SDK 编译。
+- Python：3.10 或更新版本；原生窗口助手使用当前 macOS SDK 编译。
 - 牌型名称：普通关卡和大世界使用独立中文名称表；未登记的 type 显示“类型N”。名称不参与求解。
 - 自动点击：点击位置由地图坐标和固定窗口布局计算。程序不会从屏幕识别牌面或读取真实槽位，也不会确认游戏的胜利弹窗。
 - 协议事实与样本统计于 2026-10-08 核对。游戏服务端和 Reqable 版本更新后，接口行为可能变化。
@@ -40,7 +40,7 @@ flowchart LR
 
 - macOS 和微信桌面版中的目标小游戏窗口。
 - Reqable for macOS，且安装包包含 `Contents/Helpers/mcp-server`。
-- Python 3.9 或更新版本。
+- Python 3.10 或更新版本。
 - Xcode Command Line Tools，提供 `swiftc` 和 `clang++` 编译窗口助手及逆向求解器。
 - 为启动脚本的终端应用或 Codex 授予 macOS 辅助功能权限。
 
@@ -59,7 +59,7 @@ Reqable 本地 MCP 服务的默认路径写在 `scripts/map_capture.py`：
 /Applications/Reqable.app/Contents/Helpers/mcp-server
 ```
 
-当前唯一的 Python 运行依赖为 `lzstring==1.0.4`。正向搜索、protobuf wire-format 解析、坐标处理和 Reqable MCP 客户端使用 Python 标准库。窗口点击助手由 `scripts/game_window.swift` 编译，逆向求解器由 `scripts/solve_map_native.cpp` 编译；运行时会在需要且二进制不存在或源码更新时自动编译，不需要安装 OR-Tools。
+Python 运行依赖为 `lzstring==1.0.4` 和 `networkx==3.4.2`，分别用于解压和地区导航路径搜索。protobuf wire-format 解析、坐标处理和 Reqable MCP 客户端使用 Python 标准库。窗口点击助手由 `scripts/game_window.swift` 编译，逆向求解器由 `scripts/solve_map_native.cpp` 编译；运行时会在需要且二进制不存在或源码更新时自动编译，不需要安装 OR-Tools。
 
 如果当前终端没有 `python` 命令，可使用 `python3 run`。也可以在 zsh 中配置 `alias python=python3`。
 
@@ -86,9 +86,27 @@ Reqable 本地 MCP 服务的默认路径写在 `scripts/map_capture.py`：
 
 运行中不要手动操作游戏或移动鼠标。移动鼠标超过 3 个屏幕逻辑单位、按 Ctrl-C 或进程遇到错误时，程序会停止。已发生点击的局面应从对应 `runs/` 记录继续，不能重新运行一局初始地图方案。
 
+## 大世界地区导航
+
+地区地图导航与消除关卡是两个入口。保持 Reqable 捕获，并进入显示地区坐标与岛屿的大世界页面，在项目目录运行：
+
+```sh
+# 输入游戏顶部展示的目标坐标；目标不必在当前视野内
+python run --navigate 12565 6486
+
+# 只查看方向、无障碍最少步数和下一跳，不点击
+python run --navigate 12565 6486 --dry-run
+```
+
+导航每次只点击当前回包中已知的普通相邻地块，并合并附近礼物动态状态，避开未领取奖励、正在挑战和状态未知的地块。等待服务端确认、客户端动画与新周边状态后重新规划，点击前再次核对。支持斜向移动；无障碍最少步数为 `max(abs(dx), abs(dy))`。未知区域可能存在障碍，不能预先保证可达或给出全程准确步数。
+
+默认最多移动 200 步，可用 `--max-steps N` 调整。鼠标移动、Ctrl-C、连接变化、窗口变化、回包目标不一致或超时都会停止，不会盲目重复点击。运行记录保存到 `runs/navigate-*/`。不自动处理事件、挑战或传送，当前点击布局限定为客户端版本 500 对应的等比例 350x665 窗口。
+
+地区导航的协议、限制及验证范围见[地区导航文档](docs/research/world-navigation.md)。不带 `--navigate` 的 `python run` 仍执行原来的消除关卡流程。
+
 ## 命令行参数
 
-根目录 `run` 默认开启实际点击。它自动追加 `--execute`，底层脚本为 `scripts/play_game.py`。
+根目录 `run` 默认开启实际点击。消除关卡的底层脚本为 `scripts/play_game.py`；包含 `--navigate` 时改用 `scripts/world_navigation.py`，导航可用 `--dry-run` 禁止点击。下表为消除关卡参数。
 
 | 参数 | 默认值 | 含义 |
 | --- | --- | --- |

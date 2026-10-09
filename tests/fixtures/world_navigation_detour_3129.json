@@ -1,0 +1,93 @@
+{
+  "capturedAt": "2026-10-10",
+  "recordId": 3129,
+  "start": [
+    12559,
+    6530
+  ],
+  "target": [
+    12549,
+    6520
+  ],
+  "originalSteps": 98,
+  "bounds": {
+    "Width": 350,
+    "Height": 665
+  },
+  "mapMaxX": 13600,
+  "mapMaxY": 15600,
+  "nodes": [
+    {
+      "x": 12558,
+      "y": 6531,
+      "province": 9,
+      "discovery": 0,
+      "giftStatusKnown": true,
+      "navigationBlock": null
+    },
+    {
+      "x": 12559,
+      "y": 6531,
+      "province": 9,
+      "discovery": 0,
+      "giftStatusKnown": true,
+      "navigationBlock": null
+    },
+    {
+      "x": 12560,
+      "y": 6531,
+      "province": 9,
+      "discovery": 0,
+      "giftStatusKnown": true,
+      "navigationBlock": null
+    },
+    {
+      "x": 12558,
+      "y": 6530,
+      "province": 9,
+      "discovery": 0,
+      "giftStatusKnown": true,
+      "navigationBlock": null
+    },
+    {
+      "x": 12559,
+      "y": 6530,
+      "province": 9,
+      "discovery": 0,
+      "giftStatusKnown": true,
+      "navigationBlock": null
+    },
+    {
+      "x": 12560,
+      "y": 6530,
+      "province": 9,
+      "discovery": 0,
+      "giftStatusKnown": true,
+      "navigationBlock": null
+    },
+    {
+      "x": 12558,
+      "y": 6529,
+      "province": 9,
+      "discovery": 0,
+      "giftStatusKnown": true,
+      "navigationBlock": null
+    },
+    {
+      "x": 12559,
+      "y": 6529,
+      "province": 9,
+      "discovery": 0,
+      "giftStatusKnown": true,
+      "navigationBlock": null
+    },
+    {
+      "x": 12560,
+      "y": 6529,
+      "province": 9,
+      "discovery": 0,
+      "giftStatusKnown": true,
+      "navigationBlock": null
+    }
+  ]
+}

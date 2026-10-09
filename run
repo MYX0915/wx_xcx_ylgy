@@ -29,11 +29,12 @@ def main() -> None:
         )
 
     arguments = sys.argv[1:]
-    if "--execute" not in arguments:
+    script = "world_navigation.py" if "--navigate" in arguments else "play_game.py"
+    if "--execute" not in arguments and "--dry-run" not in arguments:
         arguments.append("--execute")
     try:
         subprocess.run(
-            [str(VENV_PYTHON), str(ROOT / "scripts" / "play_game.py"), *arguments],
+            [str(VENV_PYTHON), str(ROOT / "scripts" / script), *arguments],
             cwd=ROOT,
             check=True,
         )

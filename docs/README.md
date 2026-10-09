@@ -11,4 +11,6 @@
 
 Reqable 原始抓包、解码 JSON、截图、牌图模板和每次运行状态保存在本机 `captures/`、`decoded/`、`runs/` 目录，并由 `.gitignore` 排除。样本文档可引用这些本机文件；这些文件不属于仓库内容。
 
+大世界地区移动参见[移动协议与周边地图](research/world-navigation.md)，实际点击及请求对照参见[验证记录](samples/2026-10-08/world-navigation-verification.md)。
+
 闪电飞碟的触发规则、操作上报对照及离线验证范围参见[飞碟样本核验](samples/2026-10-10/lightning-ufo.md)。
