@@ -12,6 +12,11 @@ from pathlib import Path
 import random
 import time
 
+if __package__:
+    from .lightning import identify_mechanics, solve_lightning
+else:
+    from lightning import identify_mechanics, solve_lightning
+
 
 CELL_SIZE = 8
 CAPACITY = 7
@@ -29,6 +34,7 @@ class Card:
 
 
 def load_cards(data: dict) -> list[Card]:
+    mechanics = identify_mechanics(data)
     cards = []
     seen = set()
     positions = set()
@@ -39,7 +45,9 @@ def load_cards(data: dict) -> list[Card]:
                 raise ValueError("Card type and coordinates must be integers")
             if node["type"] <= 0 or node["layerNum"] != int(layer):
                 raise ValueError("Unknown card type or inconsistent layer")
-            if node.get("AreaType", 0) != 0 or node.get("metaType", 0) != 0:
+            initial_gold = (mechanics['kind'] == 'lightning_ufo' and node['type'] == 17
+                            and node.get('metaType') == 3 and node.get('metaData') == 4)
+            if node.get("AreaType", 0) != 0 or (node.get("metaType", 0) != 0 and not initial_gold):
                 raise ValueError("Only initial boards with fixed, ordinary card types are supported")
             card = Card(node["id"], node["type"], node["rolNum"], node["rowNum"],
                         node["layerNum"], node.get("cardId", len(cards)), node.get("typeName"))
@@ -240,7 +248,9 @@ def main() -> None:
     raw = args.map.read_bytes()
     data = json.loads(raw)
     cards = load_cards(data)
-    search = solve(cards, args.seconds, args.seed)
+    mechanics = identify_mechanics(data)
+    search = (solve_lightning(data, cards, args.seconds)
+              if mechanics['kind'] == 'lightning_ufo' else solve(cards, args.seconds, args.seed))
     status, order = search['status'], search['order']
     result = {"status": status, "mapPath": str(args.map.resolve()),
               "mapSha256": hashlib.sha256(raw).hexdigest(), "levelKey": data.get("levelKey"),

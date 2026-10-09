@@ -16,7 +16,7 @@ from urllib.request import urlopen
 
 from analyze_captures import decode_map_file
 from solve_map import load_cards
-from seed_map import assign_types, recover_seed
+from seed_map import assign_types, recover_seed, static_type_counts
 
 
 MCP_SERVER = '/Applications/Reqable.app/Contents/Helpers/mcp-server'
@@ -28,10 +28,10 @@ GAME_MODES = {
 }
 NAMES = {1: '草', 2: '胡萝卜', 3: '玉米', 4: '树桩', 5: '叉子', 6: '白菜', 7: '羊毛',
          8: '刷子', 9: '剪刀', 10: '奶瓶', 11: '水桶', 12: '手套', 13: '铃铛',
-         14: '篝火', 15: '粉红线团'}
+         14: '篝火', 15: '粉红线团', 17: '闪电'}
 WORLD_NAMES = {1: '草', 2: '胡萝卜', 3: '玉米', 4: '树桩', 5: '叉子', 6: '白菜', 7: '羊毛',
                8: '刷子', 9: '剪刀', 10: '奶瓶', 11: '水桶', 12: '手套', 13: '铃铛',
-               14: '篝火', 15: '粉红线团'}
+               14: '篝火', 15: '粉红线团', 17: '闪电'}
 MODE_NAMES = {'daily': NAMES, 'world': WORLD_NAMES}
 GAME_ENDS = {'/sheep/v1/game/game_over_ex', '/sheep/v1/game/world/game_over'}
 
@@ -237,6 +237,8 @@ def merge_runtime(game_map, states, match_type):
         b = blocks[node['id']]
         if node['moldType'] != b['moldType']:
             raise ValueError('Runtime and static card structures differ')
+        if node.get('type') == 17 and b['type'] != 17:
+            raise ValueError('Runtime type differs from fixed lightning tile')
         node.update(type=b['type'], cardId=b['blockId'], metaType=b['metaType'],
                     metaData=b['metaData'], AreaType=b['AreaType'])
     return game_map
@@ -250,6 +252,9 @@ def apply_type_names(game_map, mode):
 
 
 def get_current_map(client):
+    from copy import deepcopy
+    from lightning import identify_mechanics, map_kind
+
     record = client.latest_map_record()
     mode, match_type = game_mode(record)
     source = {'recordId': record['id'], 'recordUid': record['uid'],
@@ -262,9 +267,25 @@ def get_current_map(client):
     if not isinstance(data.get('map_md5'), list) or len(data['map_md5']) != 2:
         raise ValueError('Expected a two-level map response')
     game_map = read_static_map(client, data['map_md5'][1])
+    mechanics = identify_mechanics(game_map)
+    expected = static_type_counts(game_map)
     if data.get('match_data'):
+        static_map = deepcopy(game_map)
         game_map = merge_runtime(game_map, decompress_match(data['match_data']), match_type)
         source['typeSource'] = 'match_data'
+        if mechanics['kind'] == 'lightning_ufo':
+            seed = data.get('map_seed', [])
+            if data.get('need_seed'):
+                seed, evidence = captured_seed(client, record, data)
+                source.update(evidence)
+            seeded = assign_types(static_map, seed)
+            expected_nodes = {n['id']: (n['type'], n['cardId'])
+                              for layer in seeded['levelData'].values() for n in layer}
+            actual_nodes = {n['id']: (n['type'], n['cardId'])
+                            for layer in game_map['levelData'].values() for n in layer}
+            if expected_nodes != actual_nodes:
+                raise ValueError('UFO runtime board differs from the verified seeded map')
+            game_map['_shuffleState'] = seeded['_shuffleState']
     else:
         seed = data.get('map_seed', [])
         if data.get('need_seed'):
@@ -274,10 +295,11 @@ def get_current_map(client):
         source['typeSource'] = 'seed'
     apply_type_names(game_map, mode)
     cards = load_cards(game_map)
-    expected = {int(kind): groups * 3 for kind, groups in game_map['blockTypeData'].items() if groups}
     if Counter(c.type for c in cards) != expected:
         raise ValueError('Assigned type counts differ from static map')
     source.update(mapMd5=data['map_md5'][1])
+    source['mapKind'] = map_kind(game_map, mode)
+    game_map['_mechanics'] = mechanics
     game_map['_source'] = source
     client.ensure_current_game(source)
     return game_map

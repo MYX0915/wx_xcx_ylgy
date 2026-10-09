@@ -12,6 +12,8 @@ import time
 
 from map_capture import Reqable, apply_type_names, get_current_map
 from solve_map import load_cards, replay, solve
+from lightning import (LABELS as MAP_LABELS, VERSION as MECHANICS_VERSION,
+                       identify_mechanics, map_kind, replay_lightning, solve_lightning)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +21,7 @@ HELPER = ROOT / 'scripts/game_window'
 BASE_WINDOW_SIZE = (350, 665)
 MODE_LABELS = {'daily': '普通关卡', 'world': '羊羊大世界'}
 MODE_LAYOUTS = {'daily': (50, 146, 4.5), 'world': (50, 146, 4.5)}
+UFO_WAIT_SECONDS = 30
 
 
 def coordinate_model(window, mode):
@@ -62,7 +65,9 @@ def select_window(info, ident):
 def prepare(client, args):
     game_map = get_current_map(client)
     source = game_map['_source']
+    mechanics = identify_mechanics(game_map)
     print(f"识别模式：{MODE_LABELS[source['mode']]}；请求 {source['recordId']}；"
+          f"地图类型：{MAP_LABELS[map_kind(game_map, source['mode'])]}；"
           f"牌型来源：{source['typeSource']}", flush=True)
     for existing in (ROOT / 'runs').glob(f"{source['recordId']}-*/map.json"):
         saved_source = json.loads(existing.read_text()).get('_source', {})
@@ -72,13 +77,17 @@ def prepare(client, args):
         if saved_progress.get('nextStep', 0) or saved_progress.get('inFlight'):
             raise ValueError(f'This game already has clicks; resume its run or start a new game: {existing.parent}')
     cards = load_cards(game_map)
-    result = solve(cards, args.seconds)
+    result = (solve_lightning(game_map, cards, args.seconds)
+              if mechanics['kind'] == 'lightning_ufo' else solve(cards, args.seconds))
     status, order = result['status'], result['order']
     if status != 'solved':
         raise ValueError('No verified solution: ' + status)
     result.update(status=status, operations=[cards[i].id for i in order], order=order)
     print(f"完整解已验证：{len(order)} 步；求解 {result['elapsedSeconds']} 秒；"
           f"方法 {result['backend']}", flush=True)
+    if mechanics['kind'] == 'lightning_ufo':
+        print(f"飞碟事件：{result['ufoEvents']} 次；自动移除：{result['automaticRemovedCards']} 张；"
+              '触发后等待动画 30 秒，槽位和移除结果为规则推算', flush=True)
     folder = ROOT / 'runs' / (str(game_map['_source']['recordId']) + '-' + datetime.now().strftime('%Y%m%d-%H%M%S'))
     folder.mkdir(parents=True, exist_ok=False)
     save(folder / 'map.json', game_map)
@@ -90,10 +99,18 @@ def prepare(client, args):
 
 def resume(folder):
     game_map = json.loads((folder / 'map.json').read_text())
+    has_lightning = any(n.get('type') == 17 for layer in game_map['levelData'].values() for n in layer)
+    if has_lightning and '_mechanics' not in game_map:
+        raise ValueError('旧版闪电局缺少飞碟规则记录，不能续跑；请重新进入关卡后运行 python run')
     apply_type_names(game_map, game_map.get('_source', {}).get('mode', 'daily'))
     cards = load_cards(game_map)
     result = json.loads((folder / 'solution.json').read_text())
-    result.update(replay(cards, result['order']))
+    if identify_mechanics(game_map)['kind'] == 'lightning_ufo':
+        if result.get('mechanicsVersion') != MECHANICS_VERSION:
+            raise ValueError('旧版飞碟计划不能续跑，请重新计算')
+        result.update(replay_lightning(game_map, cards, result['order']))
+    else:
+        result.update(replay(cards, result['order']))
     progress = json.loads((folder / 'progress.json').read_text())
     if progress['inFlight']:
         raise ValueError('Previous click was not verified; inspect the game before attempting a new run')
@@ -118,7 +135,7 @@ def execute(client, window, folder, game_map, cards, result, progress, model, ar
     pointer = native('pointer')
     print('Clicking starts in 3 seconds. Move the mouse or press Ctrl-C to stop.', flush=True)
     time.sleep(3)
-    stop_at = min(len(cards), progress['nextStep'] + args.max_clicks)
+    stop_at = min(len(result['order']), progress['nextStep'] + args.max_clicks)
     while progress['nextStep'] < stop_at:
         step = progress['nextStep']
         check_stop(folder, pointer)
@@ -147,15 +164,26 @@ def execute(client, window, folder, game_map, cards, result, progress, model, ar
                 save(folder / 'progress.json', progress)
             raise
         pointer = {'x': x, 'y': y}
+        ufo = result['steps'][step].get('ufo')
+        if ufo:
+            progress.update(status='waiting_ufo', pendingUfo=ufo)
+            save(folder / 'progress.json', progress)
+            print(f"闪电能量达到阈值；飞碟预计移除 {len(ufo['removedCardIds'])} 张，"
+                  f"牌 ID：{ufo['removedCardIds']}；等待动画 {UFO_WAIT_SECONDS} 秒", flush=True)
+            for _ in range(UFO_WAIT_SECONDS):
+                time.sleep(1)
+                check_stop(folder, pointer)
+            client.ensure_current_game(game_map['_source'])
+            progress.pop('pendingUfo', None)
         progress.update(nextStep=step+1, inFlight=False, status='running')
         save(folder / 'progress.json', progress)
         tray = result['steps'][step]['trayAfter']
         clicked = type_label(cards, cards[i].type)
         tray_labels = '、'.join(type_label(cards, card_type) for card_type in tray) or '空'
-        print(f"已点击【{clicked}】；当前槽位（推算）【{tray_labels}】（{step+1}/{len(cards)}）", flush=True)
+        print(f"已点击【{clicked}】；当前槽位（推算）【{tray_labels}】（{step+1}/{len(result['order'])}）", flush=True)
         time.sleep(args.delay)
         check_stop(folder, pointer)
-    progress['status'] = 'sequence_completed' if stop_at == len(cards) else 'paused'
+    progress['status'] = 'sequence_completed' if stop_at == len(result['order']) else 'paused'
     progress['winScreenConfirmed'] = False
     save(folder / 'progress.json', progress)
 
@@ -175,7 +203,7 @@ def run(args):
         model = coordinate_model(window, mode)
         save(folder / 'coordinate-model.json', model)
         preflight = {'runDirectory': str(folder), 'source': game_map['_source'],
-                     'steps': len(cards), 'window': window, 'coordinateModel': model,
+                     'steps': len(result['order']), 'window': window, 'coordinateModel': model,
                      'accessibility': info['accessibility'],
                      'clickingEnabled': args.execute}
         save(folder/'preflight.json', preflight)

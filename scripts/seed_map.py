@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from collections import Counter
 from copy import deepcopy
 import json
 import math
@@ -102,6 +103,9 @@ class XorShift128Plus:
             raise ValueError('Expected four nonzero-state uint32 seed words')
         self.state0u, self.state0l, self.state1u, self.state1l = seed
 
+    def snapshot(self):
+        return [self.state0u, self.state0l, self.state1u, self.state1l]
+
     def random(self):
         e, t, n, i = self.state0u, self.state0l, self.state1u, self.state1l
         low_sum = u32(i + t)
@@ -115,14 +119,37 @@ class XorShift128Plus:
         return 2.3283064365386963e-10 * high_sum + 2220446049250313e-31 * (low_sum >> 12)
 
 
-def assign_types(game_map, seed):
-    pool = []
-    for kind, groups in sorted(game_map['blockTypeData'].items(), key=lambda pair: int(pair[0])):
+def static_type_counts(game_map):
+    counts = Counter()
+    for kind, groups in game_map['blockTypeData'].items():
         if int(kind) <= 0 or type(groups) is not int or groups < 0:
             raise ValueError('Invalid static type counts')
-        pool.extend([int(kind)] * (3 * groups))
-    if not 0 < len(pool) <= 500:
+        counts[int(kind)] += 3 * groups
+    nodes = [node for layer in game_map['levelData'].values() for node in layer]
+    fixed = Counter()
+    untyped = 0
+    for node in nodes:
+        kind = node.get('type', 0)
+        if type(kind) is not int or kind not in (0, 17):
+            raise ValueError(f'Unsupported pretyped static node: {kind}')
+        if kind:
+            fixed[kind] += 1
+        else:
+            untyped += 1
+    if not 0 < len(nodes) <= 500:
         raise ValueError('Unexpected static card count')
+    if untyped != sum(counts.values()):
+        raise ValueError(f'Static untyped node count differs: expected {sum(counts.values())}, got {untyped}')
+    if fixed[17] % 3:
+        raise ValueError('Fixed lightning cards must form triples')
+    return counts + fixed
+
+
+def assign_types(game_map, seed):
+    static_type_counts(game_map)
+    pool = []
+    for kind, groups in sorted(game_map['blockTypeData'].items(), key=lambda pair: int(pair[0])):
+        pool.extend([int(kind)] * (3 * groups))
     rng = XorShift128Plus(seed)
     rng.random()
     for index in range(len(pool) - 1, -1, -1):
@@ -132,11 +159,12 @@ def assign_types(game_map, seed):
     card_id = 0
     for layer in sorted(result['levelData'], key=int):
         for node in result['levelData'][layer]:
-            if node.get('type', 0) != 0 or not pool:
-                raise ValueError('Seed maps must contain exactly the expected untyped nodes')
-            node['type'] = pool.pop()
+            # Fixed lightning cards do not consume an entry in the shuffled pool.
+            if node.get('type', 0) == 0:
+                node['type'] = pool.pop()
             node['cardId'] = card_id
             card_id += 1
     if pool:
         raise ValueError('Static map has fewer nodes than its type counts')
+    result['_shuffleState'] = rng.snapshot()
     return result

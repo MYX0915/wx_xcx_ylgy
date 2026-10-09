@@ -141,7 +141,7 @@ class CaptureTests(unittest.TestCase):
 class TypeNameTests(unittest.TestCase):
     def test_mode_tables_are_independent(self):
         self.assertIsNot(MODE_NAMES['daily'], MODE_NAMES['world'])
-        self.assertEqual(set(MODE_NAMES['world']), set(range(1, 16)))
+        self.assertEqual(set(MODE_NAMES['world']), set(range(1, 16)) | {17})
         self.assertEqual(MODE_NAMES['world'][11], '水桶')
         self.assertEqual(MODE_NAMES['world'][12], '手套')
         with patch.dict(MODE_NAMES['world'], {1: '大世界测试名称'}):

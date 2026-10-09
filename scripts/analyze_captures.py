@@ -105,6 +105,20 @@ def decode_map_file(path: Path) -> dict:
         if key is not None:
             result["blockTypeData"][str(key)] = scalar(message, 2, 0)
 
+    gold = matching(root, 6)
+    if gold:
+        if len(gold) != 1:
+            raise ValueError("Duplicate goldBlockData")
+        message = fields(bytes.fromhex(gold[0]["hex"]))
+        result["goldBlockData"] = {
+            "collectCount": scalar(message, 1, 0),
+            "blockList": [
+                {"val": scalar(block, 1, 0), "count": scalar(block, 2, 0)}
+                for entry in matching(message, 2)
+                for block in [fields(bytes.fromhex(entry["hex"]))]
+            ],
+        }
+
     for entry in matching(root, 5):
         message = entry.get("message", [])
         layer = scalar(message, 1)
