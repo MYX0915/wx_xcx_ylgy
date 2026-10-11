@@ -77,6 +77,23 @@ class LightningMapTests(unittest.TestCase):
         self.assertTrue(all(c.name == '闪电' for c in cards if c.type == 17))
         self.assertEqual(result['_source']['typeSource'], 'seed')
 
+    def test_world_ufo_seed_pipeline_names_straw_and_lightning(self):
+        game_map = lightning_map()
+        game_map['blockTypeData'] = {'16': 1, '2': 1}
+        game_map['goldBlockData'] = {'collectCount': 10, 'blockList': [{'val': 17}]}
+        payload = {'err_code': 0, 'data': {'map_md5': ['a'*32, 'b'*32],
+                                          'map_seed': [1, 2, 3, 4], 'need_seed': False}}
+        client = Captures([record(1, 'world/game_start', 6, payload=payload)])
+        with patch('map_capture.read_static_map', return_value=game_map):
+            result = get_current_map(client)
+        cards = load_cards(result)
+        self.assertEqual(result['_source']['mode'], 'world')
+        self.assertEqual(result['_source']['mapKind'], 'lightning_ufo')
+        self.assertEqual(result['_mechanics']['energyType'], 17)
+        self.assertEqual(Counter(c.type for c in cards), {16: 3, 2: 3, 17: 3})
+        self.assertTrue(all(c.name == '稻草' for c in cards if c.type == 16))
+        self.assertTrue(all(c.name == '闪电' for c in cards if c.type == 17))
+
     def test_runtime_pipeline_preserves_fixed_lightning_positions(self):
         nodes = assign_types(lightning_map(), [1, 2, 3, 4])['levelData']['1']
         blocks = [dict(type=n['type'], colNum=n['rolNum'], rowNum=0, layerNum=1,

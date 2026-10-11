@@ -141,7 +141,7 @@ class CaptureTests(unittest.TestCase):
 class TypeNameTests(unittest.TestCase):
     def test_mode_tables_are_independent(self):
         self.assertIsNot(MODE_NAMES['daily'], MODE_NAMES['world'])
-        self.assertEqual(set(MODE_NAMES['world']), set(range(1, 16)) | {17})
+        self.assertEqual(set(MODE_NAMES['world']), set(range(1, 18)))
         self.assertEqual(MODE_NAMES['world'][11], '水桶')
         self.assertEqual(MODE_NAMES['world'][12], '手套')
         with patch.dict(MODE_NAMES['world'], {1: '大世界测试名称'}):
@@ -150,6 +150,16 @@ class TypeNameTests(unittest.TestCase):
             self.assertEqual(type_label(load_cards(game_map), 1), '大世界测试名称')
             apply_type_names(game_map, 'daily')
             self.assertEqual(type_label(load_cards(game_map), 1), '草')
+
+    def test_straw_names_preserve_numeric_types_in_both_modes(self):
+        game_map = small_map()
+        for node in game_map['levelData']['1']:
+            node.update(type=16, typeName='类型16')
+        for mode in ('daily', 'world'):
+            with self.subTest(mode=mode):
+                apply_type_names(game_map, mode)
+                self.assertEqual(type_label(load_cards(game_map), 16), '稻草')
+                self.assertTrue(all(node['type'] == 16 for node in game_map['levelData']['1']))
 
     def test_unknown_type_does_not_inherit_a_stale_name(self):
         game_map = small_map()
