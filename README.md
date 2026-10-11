@@ -59,7 +59,9 @@ Reqable 本地 MCP 服务的默认路径写在 `scripts/map_capture.py`：
 /Applications/Reqable.app/Contents/Helpers/mcp-server
 ```
 
-Python 运行依赖为 `lzstring==1.0.4` 和 `networkx==3.4.2`，分别用于解压和地区导航路径搜索。protobuf wire-format 解析、坐标处理和 Reqable MCP 客户端使用 Python 标准库。窗口点击助手由 `scripts/game_window.swift` 编译，逆向求解器由 `scripts/solve_map_native.cpp` 编译；运行时会在需要且二进制不存在或源码更新时自动编译，不需要安装 OR-Tools。
+Python 运行依赖为 `lzstring==1.0.4`、`networkx==3.4.2` 和 `truststore==0.10.4`，分别用于解压、地区导航路径搜索和系统证书验证。protobuf wire-format 解析、坐标处理和 Reqable MCP 客户端使用 Python 标准库。窗口点击助手由 `scripts/game_window.swift` 编译，逆向求解器由 `scripts/solve_map_native.cpp` 编译；运行时会在需要且二进制不存在或源码更新时自动编译，不需要安装 OR-Tools。
+
+静态地图下载使用系统信任库，并保留 HTTPS 证书链及主机名校验。通过 Reqable HTTPS 代理下载时，其当前 CA 必须已在 macOS 钥匙串中被信任；不会自动信任新 CA 或关闭证书验证。出现 `CERTIFICATE_VERIFY_FAILED` 时检查代理 CA 是否与钥匙串中可信的证书一致，单纯重试不能修复信任配置。
 
 如果当前终端没有 `python` 命令，可使用 `python3 run`。也可以在 zsh 中配置 `alias python=python3`。
 
@@ -289,7 +291,9 @@ protobuf 字段语义应以当前本机代码和匹配的客户端协议为准�
 
 筛选返回记录 ID 后，客户端逐个调用 `capture_live_get_by_id` 并检查 URL 的 path 必须精确等于 `/sheep/v1/game/map_info_ex`。静态地图查找筛选完整的 `https://cat-match-static.easygame2021.com/maps/{map_md5}.map` URL。
 
-响应体支持 Reqable 提供的 `base64` 和 `utf8` 两种编码。MCP 调用单次等待上限为 15 秒；失败、空响应、HTTP 非 200、无法识别的编码和空 `match_data` 都会终止本次流程。
+响应体支持 Reqable 提供的 `base64` 和 `utf8` 两种编码。MCP 调用单次等待上限为 15 秒。只读捕获工具 `capture_live_filter` 和 `capture_live_get_by_id` 遇到超时、连接中断或无效 MCP JSON 响应时，最多尝试 3 次，重试间隔依次为 1 秒和 2 秒。重试前关闭旧 MCP 子进程并重新连接，丢弃旧进程的迟到响应；不重启 Reqable 应用、不清除捕获记录，也不重发游戏请求或鼠标点击。重连初始化和后续核对另需时间，整体等待可能超过单次上限。
+
+重试耗尽后停止并保留点击进度。捕获中的游戏响应 HTTP 非 200、响应体为空、无法识别的编码或地图校验失败不属于传输重试范围；空 `match_data` 按模式及可验证种子条件处理，不能作为重试理由。
 
 Reqable MCP 与上述游戏 HTTP 接口不是同一个接口：前者是本机程序化读取抓包历史的工具服务，后者是微信小游戏访问的游戏服务端。
 
@@ -381,6 +385,8 @@ screen_y = window_origin_y + (146 + 4.5 × rowNum) × scale_y
 
 `progress.json` 的 `inFlight=true` 表示在点击事件前已经写入“点击处理中”，但尚未写入该步完成状态。若程序恰在此阶段退出，不能盲目恢复；先人工核对当前游戏画面和运行状态，再决定处理方式。`sequence_completed` 只表示计划中的点击都已发送，不代表游戏确认通关；`winScreenConfirmed` 当前始终为 `false`。
 
+本局核对期间若发生读取重连，脚本重新核对最新开局记录与结算记录；连续 3 轮核对都发生重连则停止。读取结束后再次检查鼠标和窗口状态，只有仍满足安全条件才发送下一次点击，已记录完成的点击不会因读取重试而重复执行。
+
 运行 JSON 的主要字段：
 
 | 文件 | 字段 | 含义 |
@@ -411,7 +417,7 @@ screen_y = window_origin_y + (146 + 4.5 × rowNum) × scale_y
 | 找不到唯一的游戏窗口 | 停止；可用 `--window-id` 选择窗口 |
 | 游戏窗口位置、尺寸、焦点或覆盖状态不满足要求 | 点击前停止 |
 | 用户移动鼠标超过阈值 | 停止，保留进度文件 |
-| Reqable MCP 单次请求超过 15 秒 | 报超时并停止 |
+| Reqable 只读捕获请求超时或连接中断 | 最多尝试 3 次，失败后停止并保留点击进度；不重复点击 |
 | 求解器到达 `--seconds` 时限 | 报 `timeout` 并停止，不发送点击；可提高时限或改进求解算法 |
 | 束搜索裁剪后候选耗尽 | 报 `search_exhausted` 并停止，不把局部步骤当作完整解执行 |
 

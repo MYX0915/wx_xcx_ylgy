@@ -8,11 +8,16 @@ import json
 import os
 import re
 import selectors
+import ssl
 import subprocess
+import sys
 import time
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
+from urllib.error import URLError
 from urllib.request import urlopen
+
+import truststore
 
 from analyze_captures import decode_map_file
 from solve_map import load_cards
@@ -34,10 +39,26 @@ WORLD_NAMES = {1: '草', 2: '胡萝卜', 3: '玉米', 4: '树桩', 5: '叉子', 
                14: '篝火', 15: '粉红线团', 16: '稻草', 17: '闪电'}
 MODE_NAMES = {'daily': NAMES, 'world': WORLD_NAMES}
 GAME_ENDS = {'/sheep/v1/game/game_over_ex', '/sheep/v1/game/world/game_over'}
+RETRYABLE_READ_TOOLS = {'capture_live_filter', 'capture_live_get_by_id'}
+
+
+class ReqableTransportError(RuntimeError):
+    """Transient local MCP transport or response framing failure."""
+
+
+def transient_transport_message(text):
+    return any(marker in text.lower() for marker in (
+        'connection closed', 'connection reset', 'connection refused',
+        'broken pipe', 'socketexception', 'timed out', 'timeoutexception'))
 
 
 class Reqable:
     def __init__(self):
+        self.proc = None
+        self.read_retries = 0
+        self._connect()
+
+    def _connect(self):
         self.proc = subprocess.Popen([MCP_SERVER], stdin=subprocess.PIPE,
                                      stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         self.buffer = b''
@@ -51,12 +72,18 @@ class Reqable:
             raise
 
     def close(self):
-        self.proc.terminate()
+        proc, self.proc = self.proc, None
+        if proc is None:
+            return
+        proc.terminate()
         try:
-            self.proc.wait(timeout=3)
+            proc.wait(timeout=3)
         except subprocess.TimeoutExpired:
-            self.proc.kill()
-            self.proc.wait()
+            proc.kill()
+            proc.wait()
+        finally:
+            proc.stdin.close()
+            proc.stdout.close()
 
     def send(self, message):
         self.proc.stdin.write(json.dumps(message).encode() + b'\n')
@@ -75,23 +102,56 @@ class Reqable:
                         break
                     chunk = os.read(self.proc.stdout.fileno(), 65536)
                     if not chunk:
-                        raise RuntimeError('Reqable MCP disconnected')
+                        raise ReqableTransportError('Reqable MCP disconnected')
                     self.buffer += chunk
                     continue
                 line, self.buffer = self.buffer.split(b'\n', 1)
                 if not line.strip():
                     continue
                 message = json.loads(line)
+                if not isinstance(message, dict):
+                    raise ReqableTransportError('Invalid Reqable MCP envelope')
                 if message.get('id') != ident:
                     continue
                 if 'error' in message:
+                    if transient_transport_message(str(message['error'])):
+                        raise ReqableTransportError('Reqable MCP transport failed')
                     raise RuntimeError('Reqable MCP request failed: ' + method)
+                if 'result' not in message:
+                    raise ReqableTransportError('Missing Reqable MCP result')
                 return message['result']
         raise TimeoutError('Reqable MCP timed out: ' + method)
 
     def call(self, name, arguments):
+        attempts = 3 if name in RETRYABLE_READ_TOOLS else 1
+        for attempt in range(attempts):
+            try:
+                if attempt:
+                    self._connect()
+                return self._call_once(name, arguments)
+            except (TimeoutError, ConnectionError, OSError, json.JSONDecodeError,
+                    ReqableTransportError) as exc:
+                if attempts == 1:
+                    raise
+                reason = '超时' if isinstance(exc, TimeoutError) else '连接中断或响应无效'
+                if attempt == attempts - 1:
+                    raise RuntimeError(f'Reqable 读取失败：{name}，已尝试 {attempts} 次（{reason}）；'
+                                       '已停止，不会重发点击。请检查 Reqable 后按保存进度恢复。') from None
+                self.read_retries += 1
+                self.close()  # Discard late replies and partial frames from the failed process.
+                delay = attempt + 1
+                print(f'Reqable 读取{reason}：{name}；{delay} 秒后重试'
+                      f'（{attempt + 2}/{attempts}），不会重发点击。', file=sys.stderr, flush=True)
+                time.sleep(delay)
+
+    def _call_once(self, name, arguments):
         result = self.rpc('tools/call', {'name': name, 'arguments': arguments})
+        if not isinstance(result, dict):
+            raise ReqableTransportError('Invalid Reqable tool result')
         if result.get('isError'):
+            text = ' '.join(c.get('text', '') for c in result.get('content', []) if c.get('type') == 'text')
+            if transient_transport_message(text):
+                raise ReqableTransportError('Reqable local HTTP transport failed')
             raise RuntimeError('Reqable tool failed: ' + name)
         if 'structuredContent' in result:
             return result['structuredContent']
@@ -115,6 +175,14 @@ class Reqable:
         raise ValueError('No captured game start; enter a game while Reqable records')
 
     def ensure_current_game(self, source):
+        for _ in range(3):
+            retries = getattr(self, 'read_retries', 0)
+            self._check_current_game(source)
+            if getattr(self, 'read_retries', 0) == retries:
+                return
+        raise RuntimeError('Reqable 读取持续重连，无法稳定核对当前局；停止点击')
+
+    def _check_current_game(self, source):
         latest = self.latest_map_record()
         if latest['uid'] != source['recordUid']:
             raise ValueError('A different game or mode has started; refusing the saved map')
@@ -165,8 +233,15 @@ def read_static_map(client, md5):
     if ids:
         raw = response_bytes(client.call('capture_live_get_by_id', {'id': max(ids)}))
     else:
-        with urlopen(url, timeout=15) as response:
-            raw = response.read(2_000_001)
+        context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        try:
+            with urlopen(url, timeout=15, context=context) as response:
+                raw = response.read(2_000_001)
+        except URLError as exc:
+            if isinstance(exc.reason, ssl.SSLCertVerificationError):
+                raise ValueError('静态地图下载证书校验失败：请检查 macOS 钥匙串中的代理 CA '
+                                 '是否可信、Reqable 当前使用的 CA 是否一致；不会跳过证书校验。') from exc
+            raise
         if len(raw) > 2_000_000:
             raise ValueError('Unexpectedly large static map')
     return decode_map_file(SimpleNamespace(name=md5, read_bytes=lambda: raw))

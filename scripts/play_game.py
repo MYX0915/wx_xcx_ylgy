@@ -143,6 +143,11 @@ def execute(client, window, folder, game_map, cards, result, progress, model, ar
         if current_window['bounds'] != window['bounds'] or current_window['pid'] != window['pid']:
             raise ValueError('Game window moved, resized, or restarted')
         client.ensure_current_game(game_map['_source'])
+        # Capture retries may take seconds; recheck input safety after they finish.
+        check_stop(folder, pointer)
+        current_window = select_window(native('inspect'), window['id'])
+        if current_window['bounds'] != window['bounds'] or current_window['pid'] != window['pid']:
+            raise ValueError('Game window moved, resized, or restarted')
         i = result['order'][step]
         x, y = card_point(cards[i], model)
         bounds = window['bounds']
